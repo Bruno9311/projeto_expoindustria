@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Dashboard IoT - SENAI</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        /* SEU CSS PERMANECE EXATAMENTE O MESMO AQUI */
+        :root {
+            --cor-fundo-claro: #f4f7f6; --cor-texto-claro: #1a1a1a;
+            --cor-fundo-escuro: #121212; --cor-texto-escuro: #e0e0e0;
+            --cor-cartao-claro: #ffffff; --cor-cartao-escuro: #1e1e1e;
+            --cor-botao-liga: #28a745; --cor-botao-desliga: #dc3545;
+            --cor-destaque-senai: #005594;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; transition: background-color 0.5s, color 0.5s; }
+        .container { width: 90%; max-width: 400px; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); transition: background-color 0.5s; }
+        .header { text-align: center; border-bottom: 1px solid #444; padding-bottom: 15px; margin-bottom: 20px; }
+        .header img { width: 160px; margin-bottom: 10px; }
+        .header h1 { margin: 0; font-size: 1.8em; color: var(--cor-destaque-senai); }
+        .status-lampada { font-size: 1.5em; text-align: center; margin: 20px 0; font-weight: 300; }
+        .status-lampada strong { font-weight: 600; }
+        .dados-sensores { display: flex; justify-content: space-around; text-align: center; margin: 25px 0; }
+        .dado { font-size: 1.1em; }
+        .dado .valor { display: block; font-size: 2.2em; font-weight: 700; }
+        .info-dashboard { text-align: center; font-size: 1.2em; margin-top: 20px; padding-top: 20px; border-top: 1px solid #444; }
+        .controle-usuario { text-align: center; margin-top: 25px; }
+        .botao-controle { width: 100%; padding: 20px 40px; font-size: 1.5em; font-weight: bold; color: white; border: none; border-radius: 10px; cursor: pointer; transition: background-color 0.3s, transform 0.1s; }
+        .botao-controle:active { transform: scale(0.98); }
+        body.tema-claro { background-color: var(--cor-fundo-claro); color: var(--cor-texto-claro); }
+        .tema-claro .container { background-color: var(--cor-cartao-claro); }
+        .tema-claro .header, .tema-claro .info-dashboard { border-color: #ddd; }
+        body.tema-escuro { background-color: var(--cor-fundo-escuro); color: var(--cor-texto-escuro); }
+        .tema-escuro .container { background-color: var(--cor-cartao-escuro); }
+        .info-dashboard { display: none; }
+        body.modo-dashboard .info-dashboard { display: block; }
+        body.modo-dashboard .controle-usuario { display: none; }
+    </style>
+</head>
+<body class="tema-escuro">
+    <div class="container">
+        <div class="header"> <img src="https://logodownload.org/wp-content/uploads/2019/08/senai-logo-1.png" alt="Logo SENAI"> <h1>Projeto IoT</h1> </div>
+        <div class="status-lampada"> <span>A lâmpada está </span><strong id="status">--</strong> </div>
+        <div class="dados-sensores">
+            <div class="dado"> Temperatura <span class="valor" id="temp">--&deg;C</span> </div>
+            <div class="dado"> Umidade <span class="valor" id="umid">--%</span> </div>
+        </div>
+        <div class="info-dashboard"> A lâmpada foi acionada <br> <strong id="contador" style="font-size: 2.5em; color: var(--cor-destaque-senai);">0</strong> <br> vezes hoje! </div>
+        <div class="controle-usuario"> <button id="botaoToggle" class="botao-controle">CARREGANDO...</button> </div>
+    </div>
+    
+    <script>
+        // O JAVASCRIPT FOI COMPLETAMENTE REESCRITO
+        window.addEventListener('DOMContentLoaded', () => {
+
+            // --- Configurações do Adafruit IO ---
+            const AIO_USERNAME = "brunoadrian";    // Cole seu Username aqui
+            const AIO_KEY = "cf8a7936839b4871836f4de99dba4441";      // Cole sua Active Key aqui
+            const AIO_HOST = "wss://io.adafruit.com/mqtt"; // O servidor MQTT sobre WebSockets
+
+            // --- Nomes dos Feeds ---
+            const feedComando = `${AIO_USERNAME}/feeds/lampada-comando`;
+            const feedStatus = `${AIO_USERNAME}/feeds/lampada-status`;
+            const feedTemperatura = `${AIO_USERNAME}/feeds/temperatura`;
+            const feedUmidade = `${AIO_USERNAME}/feeds/umidade`;
+            const feedContador = `${AIO_USERNAME}/feeds/contador`;
+            
+            // Conecta ao broker MQTT
+            const client = mqtt.connect(AIO_HOST, {
+                username: AIO_USERNAME,
+                password: AIO_KEY,
+            });
+
+            // --- Eventos do Cliente MQTT ---
+            client.on('connect', () => {
+                console.log('Conectado com sucesso ao Adafruit IO!');
+                // Se inscreve nos feeds para receber dados
+                client.subscribe([feedStatus, feedTemperatura, feedUmidade, feedContador], (err) => {
+                    if (!err) console.log('Inscrito nos feeds de dados!');
+                });
+            });
+
+            client.on('message', (topic, message) => {
+                const value = message.toString();
+                console.log(`Mensagem recebida do tópico ${topic}: ${value}`);
+                // Atualiza a interface com base no tópico da mensagem
+                if (topic === feedStatus) updateLampUI(value);
+                if (topic === feedTemperatura) document.getElementById('temp').innerHTML = `${parseFloat(value).toFixed(1)}&deg;C`;
+                if (topic === feedUmidade) document.getElementById('umid').innerHTML = `${parseFloat(value).toFixed(1)}%`;
+                if (topic === feedContador) document.getElementById('contador').innerText = value;
+            });
+
+            client.on('error', (err) => {
+                console.error('Erro de conexão:', err);
+                client.end();
+            });
+
+            // --- Lógica da Interface ---
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('view') === 'dashboard') {
+                document.body.classList.add('modo-dashboard');
+                document.documentElement.style.fontSize = '22px';
+            }
+
+            document.getElementById('botaoToggle').addEventListener('click', () => {
+                // Publica uma mensagem no feed de comando para acionar o ESP32
+                console.log('Enviando comando "toggle"');
+                client.publish(feedComando, 'toggle');
+            });
+            
+            function updateLampUI(estado) {
+                const statusEl = document.getElementById('status');
+                const botaoEl = document.getElementById('botaoToggle');
+                const bodyEl = document.body;
+                if (estado === "ON") {
+                    statusEl.innerText = "LIGADA"; botaoEl.innerText = "DESLIGAR"; botaoEl.style.backgroundColor = 'var(--cor-botao-desliga)'; bodyEl.classList.remove('tema-escuro'); bodyEl.classList.add('tema-claro');
+                } else {
+                    statusEl.innerText = "DESLIGADA"; botaoEl.innerText = "LIGAR"; botaoEl.style.backgroundColor = 'var(--cor-botao-liga)'; bodyEl.classList.remove('tema-claro'); bodyEl.classList.add('tema-escuro');
+                }
+            }
+        });
+    </script>
+</body>
+</html>
