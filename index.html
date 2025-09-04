@@ -5,17 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Dashboard IoT - SENAI</title>
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* SEU CSS PERMANECE EXATAMENTE O MESMO AQUI */
+        /* O CSS continua o mesmo, com um pequeno acréscimo para os gráficos */
         :root {
             --cor-fundo-claro: #f4f7f6; --cor-texto-claro: #1a1a1a;
             --cor-fundo-escuro: #121212; --cor-texto-escuro: #e0e0e0;
             --cor-cartao-claro: #ffffff; --cor-cartao-escuro: #1e1e1e;
             --cor-botao-liga: #28a745; --cor-botao-desliga: #dc3545;
             --cor-destaque-senai: #005594;
+            --cor-temp: #ff6384;
+            --cor-umid: #36a2eb;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; transition: background-color 0.5s, color 0.5s; }
-        .container { width: 90%; max-width: 400px; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); transition: background-color 0.5s; }
+        .container { width: 90%; max-width: 450px; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); transition: background-color 0.5s, all 0.3s; }
         .header { text-align: center; border-bottom: 1px solid #444; padding-bottom: 15px; margin-bottom: 20px; }
         .header img { width: 160px; margin-bottom: 10px; }
         .header h1 { margin: 0; font-size: 1.8em; color: var(--cor-destaque-senai); }
@@ -24,6 +27,8 @@
         .dados-sensores { display: flex; justify-content: space-around; text-align: center; margin: 25px 0; }
         .dado { font-size: 1.1em; }
         .dado .valor { display: block; font-size: 2.2em; font-weight: 700; }
+        .dado .valor#temp { color: var(--cor-temp); }
+        .dado .valor#umid { color: var(--cor-umid); }
         .info-dashboard { text-align: center; font-size: 1.2em; margin-top: 20px; padding-top: 20px; border-top: 1px solid #444; }
         .controle-usuario { text-align: center; margin-top: 25px; }
         .botao-controle { width: 100%; padding: 20px 40px; font-size: 1.5em; font-weight: bold; color: white; border: none; border-radius: 10px; cursor: pointer; transition: background-color 0.3s, transform 0.1s; }
@@ -33,6 +38,12 @@
         .tema-claro .header, .tema-claro .info-dashboard { border-color: #ddd; }
         body.tema-escuro { background-color: var(--cor-fundo-escuro); color: var(--cor-texto-escuro); }
         .tema-escuro .container { background-color: var(--cor-cartao-escuro); }
+        
+        /* NOVO: Estilos e lógica para os gráficos */
+        .graficos-dashboard { display: none; margin-top: 20px; }
+        body.modo-dashboard .graficos-dashboard { display: block; }
+        body.modo-dashboard .container { max-width: 600px; } /* Aumenta o container na TV */
+
         .info-dashboard { display: none; }
         body.modo-dashboard .info-dashboard { display: block; }
         body.modo-dashboard .controle-usuario { display: none; }
@@ -46,18 +57,22 @@
             <div class="dado"> Temperatura <span class="valor" id="temp">--&deg;C</span> </div>
             <div class="dado"> Umidade <span class="valor" id="umid">--%</span> </div>
         </div>
+        
+        <div class="graficos-dashboard">
+            <canvas id="graficoTemperatura"></canvas>
+            <canvas id="graficoUmidade" style="margin-top: 20px;"></canvas>
+        </div>
+
         <div class="info-dashboard"> A lâmpada foi acionada <br> <strong id="contador" style="font-size: 2.5em; color: var(--cor-destaque-senai);">0</strong> <br> vezes hoje! </div>
         <div class="controle-usuario"> <button id="botaoToggle" class="botao-controle">CARREGANDO...</button> </div>
     </div>
     
     <script>
-        // O JAVASCRIPT FOI COMPLETAMENTE REESCRITO
         window.addEventListener('DOMContentLoaded', () => {
-
             // --- Configurações do Adafruit IO ---
-            const AIO_USERNAME = "brunoadrian";    // Cole seu Username aqui
-            const AIO_KEY = "cf8a7936839b4871836f4de99dba4441";      // Cole sua Active Key aqui
-            const AIO_HOST = "wss://io.adafruit.com/mqtt"; // O servidor MQTT sobre WebSockets
+            const AIO_USERNAME = "brunoadrian";
+            const AIO_KEY = "cf8a7936839b4871836f4de99dba4441";
+            const AIO_HOST = "wss://io.adafruit.com/mqtt";
 
             // --- Nomes dos Feeds ---
             const feedComando = `${AIO_USERNAME}/feeds/lampada-comando`;
@@ -66,49 +81,101 @@
             const feedUmidade = `${AIO_USERNAME}/feeds/umidade`;
             const feedContador = `${AIO_USERNAME}/feeds/contador`;
             
-            // Conecta ao broker MQTT
-            const client = mqtt.connect(AIO_HOST, {
-                username: AIO_USERNAME,
-                password: AIO_KEY,
-            });
-
-            // --- Eventos do Cliente MQTT ---
-            client.on('connect', () => {
-                console.log('Conectado com sucesso ao Adafruit IO!');
-                // Se inscreve nos feeds para receber dados
-                client.subscribe([feedStatus, feedTemperatura, feedUmidade, feedContador], (err) => {
-                    if (!err) console.log('Inscrito nos feeds de dados!');
-                });
-            });
-
-            client.on('message', (topic, message) => {
-                const value = message.toString();
-                console.log(`Mensagem recebida do tópico ${topic}: ${value}`);
-                // Atualiza a interface com base no tópico da mensagem
-                if (topic === feedStatus) updateLampUI(value);
-                if (topic === feedTemperatura) document.getElementById('temp').innerHTML = `${parseFloat(value).toFixed(1)}&deg;C`;
-                if (topic === feedUmidade) document.getElementById('umid').innerHTML = `${parseFloat(value).toFixed(1)}%`;
-                if (topic === feedContador) document.getElementById('contador').innerText = value;
-            });
-
-            client.on('error', (err) => {
-                console.error('Erro de conexão:', err);
-                client.end();
-            });
-
+            // --- NOVO: Variáveis e Configurações dos Gráficos ---
+            let graficoTemp, graficoUmid;
+            const MAX_DATA_POINTS = 10; // Mostrar os últimos 10 pontos de dados
+            const dadosTemperatura = {
+                labels: [],
+                datasets: [{
+                    label: 'Temperatura (°C)',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            };
+            const dadosUmidade = {
+                labels: [],
+                datasets: [{
+                    label: 'Umidade (%)',
+                    data: [],
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            };
+            const configGrafico = {
+                type: 'line',
+                options: {
+                    scales: {
+                        x: { display: false },
+                        y: { beginAtZero: false }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            };
+            
             // --- Lógica da Interface ---
             const params = new URLSearchParams(window.location.search);
             if (params.get('view') === 'dashboard') {
                 document.body.classList.add('modo-dashboard');
-                document.documentElement.style.fontSize = '22px';
+                // Inicializa os gráficos
+                const ctxTemp = document.getElementById('graficoTemperatura').getContext('2d');
+                graficoTemp = new Chart(ctxTemp, { ...configGrafico, data: dadosTemperatura });
+                const ctxUmid = document.getElementById('graficoUmidade').getContext('2d');
+                graficoUmid = new Chart(ctxUmid, { ...configGrafico, data: dadosUmidade });
             }
 
+            // --- Conexão MQTT ---
+            const client = mqtt.connect(AIO_HOST, { username: AIO_USERNAME, password: AIO_KEY });
+
+            client.on('connect', () => {
+                console.log('Conectado ao Adafruit IO!');
+                client.subscribe([feedStatus, feedTemperatura, feedUmidade, feedContador]);
+            });
+
+            client.on('message', (topic, message) => {
+                const value = message.toString();
+                if (topic === feedStatus) updateLampUI(value);
+                if (topic === feedTemperatura) {
+                    document.getElementById('temp').innerHTML = `${parseFloat(value).toFixed(1)}&deg;C`;
+                    updateChart(graficoTemp, dadosTemperatura, parseFloat(value));
+                }
+                if (topic === feedUmidade) {
+                    document.getElementById('umid').innerHTML = `${parseFloat(value).toFixed(1)}%`;
+                    updateChart(graficoUmid, dadosUmidade, parseFloat(value));
+                }
+                if (topic === feedContador) document.getElementById('contador').innerText = value;
+            });
+
             document.getElementById('botaoToggle').addEventListener('click', () => {
-                // Publica uma mensagem no feed de comando para acionar o ESP32
-                console.log('Enviando comando "toggle"');
                 client.publish(feedComando, 'toggle');
             });
             
+            function updateLampUI(estado) { /* ... função continua a mesma ... */ }
+            
+            // --- NOVO: Função para atualizar os gráficos ---
+            function updateChart(chart, chartData, newValue) {
+                if (!chart) return; // Só atualiza se o gráfico existir (modo dashboard)
+
+                const now = new Date();
+                const timeLabel = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`;
+
+                // Adiciona o novo dado
+                chartData.labels.push(timeLabel);
+                chartData.datasets[0].data.push(newValue);
+
+                // Remove o dado mais antigo se passar do limite
+                if (chartData.labels.length > MAX_DATA_POINTS) {
+                    chartData.labels.shift();
+                    chartData.datasets[0].data.shift();
+                }
+                chart.update();
+            }
+
+            // Função para atualizar a UI da lâmpada (permanece a mesma)
             function updateLampUI(estado) {
                 const statusEl = document.getElementById('status');
                 const botaoEl = document.getElementById('botaoToggle');
